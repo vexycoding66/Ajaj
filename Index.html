@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>3D Forest House Mobile Game</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #0a141d; font-family: sans-serif; user-select: none; }
+        #canvas-container { width: 100vw; height: 100vh; }
+        #ui { position: absolute; top: 20px; left: 20px; color: white; text-shadow: 2px 2px 4px rgba(0,0,0,0.8); pointer-events: none; }
+        
+        /* जॉयस्टिक का बाहरी हिस्सा */
+        #joystick-zone {
+            position: absolute;
+            bottom: 40px;
+            left: 40px;
+            width: 120px;
+            height: 120px;
+            background: rgba(255, 255, 255, 0.15);
+            border: 2px solid rgba(255, 255, 255, 0.4);
+            border-radius: 50%;
+            touch-action: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* जॉयस्टिक की बीच वाली गोटी */
+        #joystick-knob {
+            width: 50px;
+            height: 50px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            position: absolute;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+
+    <div id="ui">
+        <h1>3D Forest House Game</h1>
+        <p>Use Joystick to Move | Swipe Screen to Look Around</p>
+    </div>
+
+    <div id="joystick-zone">
+        <div id="joystick-knob"></div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        // --- सीन, कैमरा और रेंडरर सेटअप ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xa0c0f0); // आसमान का रंग (Light Blue)
+        scene.fog = new THREE.FogExp2(0xa0c0f0, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+        // कैमरा को जमीन से थोड़ा ऊपर और पीछे सेट किया ताकि घर और प्लेयर एरिया दिखे
+        camera.position.set(0, 3, 15); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // --- लाइटिंग ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.DirectionalLight(0xfffaed, 0.8);
+        sunLight.position.set(20, 40, 20);
+        sunLight.castShadow = true;
+        scene.add(sunLight);
+
+        // --- नीचे घास वाली जमीन (Grass Ground) ---
+        const groundSize = 200;
+        const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize);
+        // हरा रंग देकर घास जैसा लुक बनाया
+        const groundMat = new THREE.MeshStandardMaterial({ color: 0x3b5d38, roughness: 0.9 }); 
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.rotation.x = -Math.PI / 2; // जमीन को सीधा चपटा करने के लिए
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        // --- 3D मॉडल लोडर (आपका Forest House) ---
+        const loader = new THREE.GLTFLoader();
+        let houseModel;
+
+        loader.load('forest_house.glb', function(gltf) {
+            houseModel = gltf.scene;
+            houseModel.position.set(0, 0, 0); // जमीन के बिल्कुल ऊपर रखना
+            houseModel.scale.set(1, 1, 1);
+            
+            // मॉडल की सभी चीज़ों पर शैडो इनेबल करना
+            houseModel.traverse(function(node) {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                }
+            });
+            
+            scene.add(houseModel);
+        });
+
+        // --- प्लेयर मूवमेंट और कैमरा लुक वेरिएबल्स ---
+        let moveX = 0, moveZ = 0;
+        let playerSpeed = 0.1;
+        let yaw = 0, pitch = 0; // कैमरा घुमाने के लिए एंगल
+
+        // --- स्क्रीन स्वाइप से चारों तरफ देखना (Look Around Logic) ---
+        let isPointerDown = false;
+        let prevPointerX = 0, prevPointerY = 0;
+
+        window.addEventListener('pointerdown', (e) => {
+            // अगर जॉयस्टिक पर टच नहीं किया है, तभी कैमरा घुमाएं
+            if(e.target.id !== 'joystick-zone' && e.target.id !== 'joystick-knob') {
+                isPointerDown = true;
+                prevPointerX = e.clientX;
+                prevPointerY = e.clientY;
+            }
+        });
+
+        window.addEventListener('pointermove', (e) => {
+            if (!isPointerDown) return;
+            let deltaX = e.clientX - prevPointerX;
+            let deltaY = e.clientY - prevPointerY;
+            
+            yaw -= deltaX * 0.005;
+            pitch -= deltaY * 0.005;
+            pitch = Math.max(-Math.PI/4, Math.min(Math.PI/4, pitch)); // ऊपर-नीचे देखने की लिमिट
+            
+            prevPointerX = e.clientX;
+            prevPointerY = e.clientY;
+        });
+
+        window.addEventListener('pointerup', () => isPointerDown = false);
+
+        // --- जॉयस्टिक लॉजिक (Joystick Movement) ---
+        const zone = document.getElementById('joystick-zone');
+        const knob = document.getElementById('joystick-knob');
+        let joystickActive = false;
+        let startX, startY;
+
+        zone.addEventListener('touchstart', (e) => {
+            joystickActive = true;
+            const touch = e.touches[0];
+            startX = touch.clientX;
+            startY = touch.clientY;
+        });
+
+        zone.addEventListener('touchmove', (e) => {
+            if (!joystickActive) return;
+            const touch = e.touches[0];
+            let deltaX = touch.clientX - startX;
+            let deltaY = touch.clientY - startY;
+            
+            // जॉयस्टिक को बाउंड्री के अंदर रखना (अधिकतम 45px दूर जा सके)
+            const distance = Math.min(45, Math.sqrt(deltaX*deltaX + deltaY*deltaY));
+            const angle = Math.atan2(deltaY, deltaX);
+            
+            let knobX = Math.cos(angle) * distance;
+            let knobY = Math.sin(angle) * distance;
+            
+            knob.style.transform = `translate(${knobX}px, ${knobY}px)`;
+            
+            // मूवमेंट वैल्यू सेट करना (-1 से 1 के बीच)
+            moveX = knobX / 45;
+            moveZ = knobY / 45;
+        });
+
+        zone.addEventListener('touchend', () => {
+            joystickActive = false;
+            knob.style.transform = 'translate(0px, 0px)'; // वापस बीच में लाना
+            moveX = 0;
+            moveZ = 0; // रुक जाना
+        });
+
+        // --- गेम का मुख्य लूप (Animation Loop) ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 1. कैमरे की दिशा अपडेट करना (रोटेशन)
+            const targetRotation = new THREE.Quaternion();
+            targetRotation.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+            camera.quaternion.slerp(targetRotation, 0.1);
+
+            // 2. जॉयस्टिक के हिसाब से कैमरा/प्लेयर को आगे-पीछे ले जाना
+            if (moveX !== 0 || moveZ !== 0) {
+                // कैमरे के सामने की दिशा निकालना
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0; // हवा में न उड़े, जमीन पर चले
+                forward.normalize();
+
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+
+                // प्लेयर की नई पोजीशन तय करना
+                camera.position.addScaledVector(forward, -moveZ * playerSpeed);
+                camera.position.addScaledVector(right, moveX * playerSpeed);
+            }
+
+            renderer.render(scene, camera);
+        }
+        animate();
+
+        // --- स्क्रीन रिसाइज ---
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
